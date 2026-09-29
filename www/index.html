@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Uno Captures</title>
+    <style>
+        :root {
+            --bg: #f6f7f9;
+            --card: #ffffff;
+            --text: #1d2330;
+            --muted: #6b7280;
+            --border: #e3e6eb;
+            --accent: #2563eb;
+            --live: #16a34a;
+            --error: #dc2626;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #111418;
+                --card: #1a1e24;
+                --text: #e6e8eb;
+                --muted: #9aa3ae;
+                --border: #2a3039;
+                --accent: #60a5fa;
+                --live: #22c55e;
+                --error: #f87171;
+            }
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 24px 16px 48px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        main { max-width: 1200px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px 16px;
+            margin-bottom: 24px;
+        }
+        h1 { margin: 0; font-size: 1.6rem; }
+
+        .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.9rem; }
+        .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+        .status.live .dot { background: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 25%, transparent); }
+        .status.error { color: var(--error); }
+        .status.error .dot { background: var(--error); }
+
+        section { margin-bottom: 32px; }
+        section h2 {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin: 0 0 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+            font-size: 1.1rem;
+        }
+        section h2 .count { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .card a { display: block; }
+        .card img {
+            display: block;
+            width: 100%;
+            aspect-ratio: 4 / 3;       /* captures are 640x480 */
+            object-fit: cover;
+            background: var(--border);
+        }
+        .card .caption {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 8px;
+            padding: 8px 10px;
+            font-size: 0.85rem;
+        }
+        .card .num { font-weight: 600; }
+        .card .time { color: var(--muted); font-variant-numeric: tabular-nums; }
+        .card .file {
+            padding: 0 10px 8px;
+            color: var(--muted);
+            font-size: 0.75rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Briefly highlight images that were just added or replaced */
+        .card.fresh { animation: flash 1.6s ease-out; }
+        @keyframes flash {
+            from { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+            to   { border-color: var(--border); box-shadow: none; }
+        }
+
+        .empty {
+            padding: 48px 16px;
+            text-align: center;
+            color: var(--muted);
+            border: 1px dashed var(--border);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <header>
+            <h1>Uno Captures</h1>
+            <div id="status" class="status"><span class="dot"></span><span id="status-text">Connecting…</span></div>
+        </header>
+        <div id="gallery"></div>
+        <p id="empty" class="empty" hidden>No captures yet. Waiting for images…</p>
+    </main>
+
+    <script>
+        const POLL_MS = 1000;   // how often to ask the server for the image list
+
+        const gallery = document.getElementById("gallery");
+        const emptyMsg = document.getElementById("empty");
+        const statusEl = document.getElementById("status");
+        const statusText = document.getElementById("status-text");
+
+        const sections = new Map();   // group name -> <section> element
+        const cards = new Map();      // image path -> { el, img, version }
+        let firstLoad = true;
+
+        const byName = (a, b) => a.localeCompare(b, undefined, { numeric: true });   // so 2 sorts before 10
+
+        function setStatus(kind, text) {
+            statusEl.className = "status " + kind;
+            statusText.textContent = text;
+        }
+
+        // Filenames look like test_20260927_210207_3.jpg -> use the trailing number as the capture number
+        function captureNumber(name) {
+            const match = name.match(/_(\d+)\.jpe?g$/i);
+            return match ? "#" + match[1] : name;
+        }
+
+        function imageUrl(image) {
+            const parts = image.group ? [image.group, image.name] : [image.name];
+            // ?v=... changes whenever the file changes, which makes the browser download the new version
+            return "/captures/" + parts.map(encodeURIComponent).join("/") + "?v=" + image.mtime + "-" + image.size;
+        }
+
+        function getSection(group) {
+            let section = sections.get(group);
+            if (!section) {
+                section = document.createElement("section");
+                section.innerHTML = '<h2><span class="title"></span><span class="count"></span></h2><div class="grid"></div>';
+                section.querySelector(".title").textContent = group || "Captures";
+                sections.set(group, section);
+            }
+            return section;
+        }
+
+        function createCard() {
+            const el = document.createElement("div");
+            el.className = "card";
+            el.innerHTML =
+                '<a target="_blank" rel="noopener"><img alt="" loading="lazy"></a>' +
+                '<div class="caption"><span class="num"></span><span class="time"></span></div>' +
+                '<div class="file"></div>';
+            return { el, img: el.querySelector("img"), version: null };
+        }
+
+        function flash(el) {
+            el.classList.remove("fresh");
+            void el.offsetWidth;   // restart the animation if it is already running
+            el.classList.add("fresh");
+        }
+
+        function render(images) {
+            // Group images by folder
+            const groups = new Map();
+            for (const image of images) {
+                if (!groups.has(image.group)) groups.set(image.group, []);
+                groups.get(image.group).push(image);
+            }
+
+            // Newest folder first; inside a folder, images in capture order
+            const groupNames = [...groups.keys()].sort((a, b) => {
+                const newest = g => Math.max(...groups.get(g).map(i => i.mtime));
+                return newest(b) - newest(a) || byName(a, b);
+            });
+
+            const seen = new Set();
+            const orderedSections = [];
+
+            for (const group of groupNames) {
+                const list = groups.get(group).sort((a, b) => byName(a.name, b.name));
+                const section = getSection(group);
+                const grid = section.querySelector(".grid");
+                section.querySelector(".count").textContent = list.length + (list.length === 1 ? " image" : " images");
+
+                for (const image of list) {
+                    const key = (image.group ? image.group + "/" : "") + image.name;
+                    const version = image.mtime + "-" + image.size;
+                    seen.add(key);
+
+                    let card = cards.get(key);
+                    const isNew = !card;
+                    if (isNew) {
+                        card = createCard();
+                        cards.set(key, card);
+                    }
+
+                    // Only touch the <img> when the file actually changed, so unchanged images don't reload
+                    if (card.version !== version) {
+                        const url = imageUrl(image);
+                        card.img.src = url;
+                        card.img.alt = image.name;
+                        card.el.querySelector("a").href = url;
+                        card.el.querySelector(".num").textContent = captureNumber(image.name);
+                        card.el.querySelector(".time").textContent = new Date(image.mtime * 1000).toLocaleTimeString();
+                        card.el.querySelector(".file").textContent = image.name;
+                        card.el.querySelector(".file").title = image.name;
+                        if (!firstLoad) flash(card.el);
+                        card.version = version;
+                    }
+
+                    grid.appendChild(card.el);   // appending an existing element just moves it into order
+                }
+                orderedSections.push(section);
+            }
+
+            // Remove images and folders that no longer exist
+            for (const [key, card] of cards) {
+                if (!seen.has(key)) { card.el.remove(); cards.delete(key); }
+            }
+            for (const [group, section] of sections) {
+                if (!groups.has(group)) { section.remove(); sections.delete(group); }
+            }
+
+            orderedSections.forEach(section => gallery.appendChild(section));
+            emptyMsg.hidden = images.length > 0;
+            firstLoad = false;
+        }
+
+        async function refresh() {
+            try {
+                const res = await fetch("/api/images", { cache: "no-store" });
+                if (!res.ok) throw new Error((await res.text()).trim() || res.statusText);
+                const images = await res.json();
+                render(images);
+                const n = images.length;
+                setStatus("live", `Live · ${n} ${n === 1 ? "image" : "images"} · checked ${new Date().toLocaleTimeString()}`);
+            } catch (err) {
+                setStatus("error", err instanceof TypeError ? "Server unreachable. Retrying…" : err.message);
+            } finally {
+                setTimeout(refresh, POLL_MS);
+            }
+        }
+
+        refresh();
+    </script>
+</body>
+</html>
