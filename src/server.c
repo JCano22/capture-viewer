@@ -23,6 +23,7 @@ static void send_text(int client_fd, const char *status, const char *body){
     write(client_fd, errhdr_buf, errhdr_len);
     write(client_fd, body, body_len);
 }
+
 int main(void)
 {
      printf("server: starting(no networking yet) \n");
@@ -179,7 +180,13 @@ int main(void)
         }
         else if(strncmp(path, "/captures/", 10) == 0){
             const char *filename = path + 10;
-            printf("image requested: [%s]\n", filename);
+            if(strstr(filename, "..") != NULL){
+                send_text(client_fd, "403 Forbidden", "Forbidden\n");
+            }
+            else{
+                printf("image requested: [%s]\n", filename);
+            }
+            
         
 
         }
