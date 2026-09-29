@@ -5,7 +5,7 @@ A C web server, written from scratch, that shows the Arduino UNO camera captures
 - **Images come from:** `~/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test`
 - **Started from:** [http-server-c](https://github.com/JCano22/http-server-c) (the original server, kept separate)
 
-**Last updated:** 2026-09-29. **Next up:** Step 2.3.
+**Last updated:** 2026-09-29. **Next up:** Step 2.4.
 
 ---
 
@@ -84,17 +84,13 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 ### Step 2: Serve one image (in progress)
 - [x] **2.1** Recognize images: `strncmp(path, "/captures/", 10) == 0`, filename is `path + 10`
 - [x] **2.2** Remove the query string: `strchr(path, '?')`, then replace `?` with `'\0'` (check for `NULL` first)
+- [x] **2.3** Moved the 404 code into `send_text(client_fd, status, body)` above `main`. Response is unchanged.
 
 ---
 
 ## To do ⏳
 
 ### Step 2: Serve one image (continued)
-- [ ] **2.3** Move the 404 code into a reusable function above `main`:
-  ```c
-  static void send_text(int client_fd, const char *status, const char *body)
-  ```
-  The `else` becomes `send_text(client_fd, "404 Not Found", "Not found\n");`. Behavior should stay exactly the same.
 - [ ] **2.4** Block `..` in the filename (`strstr(filename, "..")`) and send `403 Forbidden`, so nobody can read files outside the capture folder
 - [ ] **2.5** Build the full path: `snprintf` the capture folder + `/` + filename into a buffer
 - [ ] **2.6** Send the image in chunks. Images are ~180 KB, bigger than any single buffer.
@@ -143,3 +139,4 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 | `read()` on a socket returns 0 when the other side closes | empty requests |
 | `-Wall -Wextra` warnings point at real bugs | the "unused variable" warning |
 | Relative URLs (`/api/images`) go to the same server the page came from | `fetch()` |
+| A parameter is already a variable; declaring it again in the function is a redefinition error | `send_text` |

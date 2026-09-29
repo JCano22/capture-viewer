@@ -9,6 +9,20 @@
 #include <sys/types.h>  // basic system data types
 #include <fcntl.h>
 
+static void send_text(int client_fd, const char *status, const char *body){
+    size_t body_len = strlen(body);
+
+    char errhdr_buf[256];
+    int errhdr_len = snprintf(errhdr_buf, sizeof(errhdr_buf),
+                                "HTTP/1.1 %s\r\n"
+                                "Content-type: text/plain; charset=utf-8\r\n"
+                                "Content-Length: %zu\r\n"
+                                "Connection: close\r\n"
+                                "\r\n",
+                                status, body_len);
+    write(client_fd, errhdr_buf, errhdr_len);
+    write(client_fd, body, body_len);
+}
 int main(void)
 {
      printf("server: starting(no networking yet) \n");
@@ -171,19 +185,7 @@ int main(void)
         }
         else{
             printf("no route for %s\n", path);
-            const char *body = "Not found\n";
-            size_t body_len = strlen(body);
-
-            char errhdr_buf[256];
-            int errhdr_len = snprintf(errhdr_buf, sizeof(errhdr_buf),
-                                "HTTP/1.1 404 Not Found\r\n"
-                                "Content-type: text/plain; charset=utf-8\r\n"
-                                "Content-Length: %zu\r\n"
-                                "Connection: close\r\n"
-                                "\r\n",
-                                body_len);
-            write(client_fd, errhdr_buf, errhdr_len);
-            write(client_fd, body, body_len);
+            send_text(client_fd, "404 Not Found", "Not found\n");
 
         }
 
