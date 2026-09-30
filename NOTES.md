@@ -5,7 +5,7 @@ A C web server, written from scratch, that shows the Arduino UNO camera captures
 - **Images come from:** `~/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test`
 - **Started from:** [http-server-c](https://github.com/JCano22/http-server-c) (the original server, kept separate)
 
-**Last updated:** 2026-09-29. **Next up:** Step 2.4.
+**Last updated:** 2026-09-29. **Next up:** Step 2.5.
 
 ---
 
@@ -85,13 +85,13 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 - [x] **2.1** Recognize images: `strncmp(path, "/captures/", 10) == 0`, filename is `path + 10`
 - [x] **2.2** Remove the query string: `strchr(path, '?')`, then replace `?` with `'\0'` (check for `NULL` first)
 - [x] **2.3** Moved the 404 code into `send_text(client_fd, status, body)` above `main`. Response is unchanged.
+- [x] **2.4** Block `..` in the filename (`strstr(filename, "..")`) and send `403 Forbidden`, so nobody can read files outside the capture folder (path traversal). The rest of the image code goes in the `else`, so nothing runs after the 403. Test with `curl -i --path-as-is http://localhost:8080/captures/../src/server.c`
 
 ---
 
 ## To do ⏳
 
 ### Step 2: Serve one image (continued)
-- [ ] **2.4** Block `..` in the filename (`strstr(filename, "..")`) and send `403 Forbidden`, so nobody can read files outside the capture folder
 - [ ] **2.5** Build the full path: `snprintf` the capture folder + `/` + filename into a buffer
 - [ ] **2.6** Send the image in chunks. Images are ~180 KB, bigger than any single buffer.
   - `open` the file, `fstat` it to get the size for `Content-Length`
@@ -140,3 +140,4 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 | `-Wall -Wextra` warnings point at real bugs | the "unused variable" warning |
 | Relative URLs (`/api/images`) go to the same server the page came from | `fetch()` |
 | A parameter is already a variable; declaring it again in the function is a redefinition error | `send_text` |
+| Never trust a filename from the URL: `..` climbs out of a folder (path traversal) | `/captures/` 403 check |
