@@ -5,7 +5,7 @@ A C web server, written from scratch, that shows the Arduino UNO camera captures
 - **Images come from:** `~/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test`
 - **Started from:** [http-server-c](https://github.com/JCano22/http-server-c) (the original server, kept separate)
 
-**Last updated:** 2026-09-29. **Next up:** Step 2.5.
+**Last updated:** 2026-09-30. **Next up:** Step 3.1.
 
 ---
 
@@ -81,25 +81,22 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 - [x] **1.4** Send a proper `404 Not Found` for everything else
 - [x] Raised `file_buf` from 8192 to 32768 so the whole `index.html` is sent
 
-### Step 2: Serve one image (in progress)
+### Step 2: Serve one image
 - [x] **2.1** Recognize images: `strncmp(path, "/captures/", 10) == 0`, filename is `path + 10`
 - [x] **2.2** Remove the query string: `strchr(path, '?')`, then replace `?` with `'\0'` (check for `NULL` first)
 - [x] **2.3** Moved the 404 code into `send_text(client_fd, status, body)` above `main`. Response is unchanged.
 - [x] **2.4** Block `..` in the filename (`strstr(filename, "..")`) and send `403 Forbidden`, so nobody can read files outside the capture folder (path traversal). The rest of the image code goes in the `else`, so nothing runs after the 403. Test with `curl -i --path-as-is http://localhost:8080/captures/../src/server.c`
+- [x] **2.5** Build the full path: `#define CAPTURE_DIR "<absolute path>"` (no `~`, since `open()` doesn't expand it), then `snprintf(full_path, sizeof(full_path), "%s/%s", CAPTURE_DIR, filename)` inside the inner `else`
+- [x] **2.6** Send the image in chunks
+  - `open` the file (404 + `perror` if it fails), `fstat` it for `Content-Length` (`%lld` with `(long long)st.st_size`), send headers with `Content-Type: image/jpeg`
+  - Loop: `read` up to `sizeof(chunk)` (16 KB), then send exactly `nread` bytes. Stop when `read` returns `0` (end of file) or `< 0` (error)
+  - `write_all(fd, buf, len)` above `main` keeps calling `write` until every byte is accepted; returns `-1` on error so the chunk loop can `break`
+  - `signal(SIGPIPE, SIG_IGN)` at the start of `main`, so a browser disconnect makes `write` return `-1` (logged as `write: Broken pipe`) instead of killing the server
+  - **Tested:** downloaded image is byte-identical to the original (183199 bytes); missing file → 404; `..` → 403; clients that reset mid-response log `Broken pipe` and the server keeps running
 
 ---
 
 ## To do ⏳
-
-### Step 2: Serve one image (continued)
-- [ ] **2.5** Build the full path: `snprintf` the capture folder + `/` + filename into a buffer
-- [ ] **2.6** Send the image in chunks. Images are ~180 KB, bigger than any single buffer.
-  - `open` the file, `fstat` it to get the size for `Content-Length`
-  - Send headers with `Content-Type: image/jpeg`
-  - Loop: `read` a chunk (e.g. 16 KB), `write` it, until the file is done
-  - `write()` can send fewer bytes than asked. Check its return value and keep writing.
-  - Call `signal(SIGPIPE, SIG_IGN)` at the start of `main`. Otherwise the server dies if the browser disconnects mid-image.
-  - **Test:** `curl -o test.jpg http://localhost:8080/captures/test_20260927_210207_1.jpg`, then open `test.jpg`
 
 ### Step 3: Image list (`/api/images`)
 - [ ] **3.1** List the capture folder with `opendir` / `readdir` / `closedir`
@@ -141,3 +138,12 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 | Relative URLs (`/api/images`) go to the same server the page came from | `fetch()` |
 | A parameter is already a variable; declaring it again in the function is a redefinition error | `send_text` |
 | Never trust a filename from the URL: `..` climbs out of a folder (path traversal) | `/captures/` 403 check |
+| `snprintf` writes *into* a buffer (buffer, size, format, values); it returns a length, not a string | building `full_path` |
+| `sizeof(array)` = buffer size; `strlen` = text length. `sizeof` on a pointer is just `8` | `snprintf` size argument |
+| The browser tab polls `/api/images` every second and floods the log; close it or `grep --line-buffered` when testing with curl | 2.5 test |
+| An fd is an index into the process's **file descriptor table** (fd table → open file table → inode/vnode). `fstat` follows it to get the size | `open`, `fstat` |
+| `read` returns how many bytes you actually got; `write` exactly that many, never the buffer size | chunk loop (last chunk was 15 bytes) |
+| `write` copies into the kernel's send buffer and may accept fewer bytes than offered; loop until all are sent | `write_all` |
+| `size_t` is unsigned, so `< 0` is never true; store `read`/`write` results in `ssize_t` | `write_all` bug |
+| Writing to a closed connection raises `SIGPIPE`, which kills the process by default; `SIG_IGN` turns it into a `-1` from `write` | 2.6 Part C |
+| On localhost a 183 KB image fits in the send buffer, so a slow curl + Ctrl+C may not trigger an error; a client that resets immediately does | testing `SIGPIPE` |

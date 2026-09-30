@@ -2,12 +2,17 @@
 #include <stdlib.h>     // exit, EXIT_SUCCESS, EXIT_FAILURE
 #include <string.h>     // memset
 #include <unistd.h>     // close
+#include <sys/stat.h>   // fstat, struct stat
+#include <signal.h>     // signal, SIGPIPE (for Part C)
 
 #include <arpa/inet.h>  // htons, htonl, inet_ntop
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <sys/types.h>  // basic system data types
 #include <fcntl.h>
+
+#define CAPTURE_DIR "/Users/jorgecano/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test"
+
 
 static void send_text(int client_fd, const char *status, const char *body){
     size_t body_len = strlen(body);
@@ -24,9 +29,25 @@ static void send_text(int client_fd, const char *status, const char *body){
     write(client_fd, body, body_len);
 }
 
+static int write_all(int fd, const char *buf, size_t len){
+    size_t sent = 0;
+
+    while(sent < len){
+        ssize_t nwritten = write(fd, buf + sent, len - sent);
+        if(nwritten < 0){
+            return -1;
+        }
+        
+        sent += nwritten;
+    }
+    return 0;
+}
+
 int main(void)
 {
-     printf("server: starting(no networking yet) \n");
+    signal(SIGPIPE, SIG_IGN);
+
+    printf("server: starting(no networking yet) \n");
 
      /* Create a TCP socket (IPv4)*/
      // AF_INET = IPv4
@@ -180,20 +201,66 @@ int main(void)
         }
         else if(strncmp(path, "/captures/", 10) == 0){
             const char *filename = path + 10;
+
             if(strstr(filename, "..") != NULL){
                 send_text(client_fd, "403 Forbidden", "Forbidden\n");
+            
             }
             else{
                 printf("image requested: [%s]\n", filename);
-            }
-            
-        
+                char full_path[2048];
+                snprintf(full_path, sizeof(full_path),"%s/%s",CAPTURE_DIR, filename);
+                printf("full path: [%s]\n", full_path);
 
+                int file_fd = open(full_path, O_RDONLY);
+                if (file_fd < 0) {
+                    perror("open(image)");
+                    send_text(client_fd, "404 Not Found", "Not found\n");
+                    close(client_fd); 
+                    continue;
+                }
+                struct stat st;
+                if(fstat(file_fd, &st) < 0){
+                    perror("fstat");
+                    close(file_fd);
+                    close(client_fd);
+                    continue;
+                }
+
+                char header_buf[256];
+                int header_len = snprintf(header_buf, sizeof(header_buf),
+                                        "HTTP/1.1 200 OK\r\n"
+                                        "Content-Type: image/jpeg\r\n"
+                                        "Content-Length: %lld\r\n"
+                                        "Connection: close\r\n"
+                                        "\r\n",
+                                        (long long)st.st_size);
+
+                write(client_fd, header_buf, header_len);
+
+                char chunk[16384];
+                for(;;){
+                    ssize_t nread = read(file_fd, chunk, sizeof(chunk));
+                    if(nread < 0){
+                        perror("read error");
+                        break;
+                    }
+                    else if(nread > 0){
+                        if(write_all(client_fd, chunk, nread) < 0){
+                            perror("write");
+                            break;
+                        }
+                    }
+                    else{
+                        break;
+                    }
+                }
+                close(file_fd);
+            }
         }
         else{
             printf("no route for %s\n", path);
             send_text(client_fd, "404 Not Found", "Not found\n");
-
         }
 
         close(client_fd);
