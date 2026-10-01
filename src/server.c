@@ -5,6 +5,8 @@
 #include <unistd.h>     // close
 #include <sys/stat.h>   // fstat, struct stat
 #include <signal.h>     // signal, SIGPIPE (for Part C)
+#include <sys/time.h>   // struct timeval
+
 
 #include <arpa/inet.h>  // htons, htonl, inet_ntop
 #include <netinet/in.h> // struct sockaddr_in, INADDR_ANY
@@ -213,6 +215,11 @@ int main(void)
             perror("accept");
             continue;   // don't exit the server, just try again
         }
+
+        struct timeval timeout;
+        timeout.tv_sec = 2;
+        timeout.tv_usec = 0;
+        setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
         /* Read the client's HTTP request */
         char req_buf[4096];

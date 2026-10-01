@@ -101,20 +101,22 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 - [x] **3.4** Build the JSON in a 64 KB buffer: format each object (with its leading comma) into a small `item` buffer, check it fits (`len + item_len + 2 <= sizeof(json)`, room for `]` and `'\0'`), then `memcpy` it in. Close with `]` and send with `Content-Type: application/json` via `write_all`
 - [x] **Tested:** valid JSON with all 10 images (`python3 -m json.tool`), and the page shows them
 
+### Step 4: Cleanup and improvements (in progress)
+- [x] **Idle connection timeout:** right after `accept`, `setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout))` with a 2-second `struct timeval`. An idle connection makes `read` return `-1` (`Resource temporarily unavailable`), and the existing check closes it. **Tested:** curl with an idle connection open answered in 1.8 s instead of waiting for it to close
+
 ---
 
 ## To do ⏳
 
-### Step 4: Cleanup and improvements
+### Step 4: Cleanup and improvements (continued)
 - [ ] Use the chunked file sender for `index.html` too, and remove the fixed 32 KB buffer
-- [ ] Fix the server getting stuck on Chrome's idle "preconnect" connections (see Known issues)
 - [ ] Optional: images in subfolders become separate `group`s on the page
 
 ---
 
 ## Known issues
 
-- **Server pauses on idle connections.** Chrome opens spare connections and sends nothing on them. The server handles one connection at a time and waits in `read()` until Chrome closes it, which blocks other requests meanwhile. Possible fix: a read timeout with `setsockopt(..., SO_RCVTIMEO, ...)`.
+- **Short pauses on idle connections.** Chrome opens spare connections and sends nothing on them. The 2-second read timeout limits each stall to about 2 seconds, but the server still handles one connection at a time. A full fix means handling several connections at once (`fork`, threads, or `poll`).
 - **Chrome's own requests** (like `/.well-known/appspecific/com.chrome.devtools.json` or `/favicon.ico`) show up in the log. They correctly get a 404.
 
 ---
@@ -153,3 +155,5 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 | Append to a buffer with `snprintf(buf + len, sizeof(buf) - len, ...)`; check room *before* appending | building the JSON |
 | `cond ? a : b` (ternary) picks a value inline | leading comma in each JSON object |
 | `continue` skips one item; `break` stops the loop | JSON filters vs. buffer full |
+| `SO_RCVTIMEO` + `struct timeval` (seconds + microseconds) makes `read` give up with `-1` instead of waiting forever | idle connection timeout |
+| Test a stall with `nc localhost 8080` (connects, sends nothing) plus curl in another terminal | idle connection timeout |
