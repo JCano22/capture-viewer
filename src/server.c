@@ -1,6 +1,7 @@
 #include <stdio.h>      // printf, perror
 #include <stdlib.h>     // exit, EXIT_SUCCESS, EXIT_FAILURE
 #include <string.h>     // memset
+#include <strings.h>    // strcasecmp
 #include <unistd.h>     // close
 #include <sys/stat.h>   // fstat, struct stat
 #include <signal.h>     // signal, SIGPIPE (for Part C)
@@ -10,6 +11,8 @@
 #include <sys/socket.h> // socket, bind, listen, accept
 #include <sys/types.h>  // basic system data types
 #include <fcntl.h>
+#include <dirent.h>     // opendir, readdir, closedir
+
 
 #define CAPTURE_DIR "/Users/jorgecano/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test"
 
@@ -41,6 +44,83 @@ static int write_all(int fd, const char *buf, size_t len){
         sent += nwritten;
     }
     return 0;
+}
+
+static void send_image_list(int client_fd){
+    DIR *dir = opendir(CAPTURE_DIR);
+    struct dirent *entry;
+
+    if(dir == NULL){
+        perror("opendir");
+        send_text(client_fd, "500 Internal Server Error", "Cannot read capture folder\n");
+        return;
+    }
+    char json[65536];
+    size_t len = 0;
+    int first = 1;
+
+    len += snprintf(json + len, sizeof(json) - len, "[");
+
+    while((entry = readdir(dir)) != NULL){
+        const char *name = entry->d_name;
+
+        if(name[0] == '.'){
+            continue;
+        }
+
+        const char *ext = strrchr(name, '.');
+        if(ext == NULL){
+            continue;
+        }
+        if(strcasecmp(ext, ".jpg") != 0 && strcasecmp(ext, ".jpeg") != 0){
+            continue;
+        }
+        if(strpbrk(name, "\"\\") != NULL){
+            continue;
+        }
+
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", CAPTURE_DIR, name);
+
+        struct stat st;
+        if(stat(full_path, &st) < 0){
+            continue;
+        }
+
+        char item[2048];
+        int item_len = snprintf(item, sizeof(item),
+                                "%s{\"group\":\"\",\"name\":\"%s\",\"mtime\":%lld,\"size\":%lld}",
+                                first ? "" : ",",
+                                name, (long long)st.st_mtime, (long long)st.st_size);
+
+        if(item_len < 0 || (size_t)item_len >= sizeof(item)){
+            continue;                          // this one entry didn't fit in item: skip it
+        }
+        if(len + item_len + 2 > sizeof(json)){
+            break;                             // json is full: stop adding entries
+        }
+
+        memcpy(json + len, item, item_len);
+        len += item_len;
+        first = 0;
+
+    }
+    closedir(dir);
+    json[len] = ']';
+    len += 1;
+
+    char header_buf[256];
+    int header_len = snprintf(header_buf, sizeof(header_buf),
+                            "HTTP/1.1 200 OK\r\n"
+                            "Content-Type: application/json\r\n"
+                            "Content-Length: %zu\r\n"
+                            "Connection: close\r\n"
+                            "\r\n",
+                            len);
+
+    write_all(client_fd, header_buf, header_len);
+    write_all(client_fd, json, len);
+
 }
 
 int main(void)
@@ -142,7 +222,6 @@ int main(void)
             close(client_fd);
             continue;
         }
-
         req_buf[nread] = '\0';
 
         printf("----- HTTP request start -----\n");
@@ -167,7 +246,6 @@ int main(void)
         printf("method = [%s], path [%s]\n", method, path);
 
         if(strcmp(path, "/") == 0){
-            
             /* Serve www/index.html */
             int file_fd = open("www/index.html", O_RDONLY);
             if (file_fd < 0) {
@@ -257,6 +335,9 @@ int main(void)
                 }
                 close(file_fd);
             }
+        }
+        else if(strcmp(path, "/api/images") == 0){
+            send_image_list(client_fd);
         }
         else{
             printf("no route for %s\n", path);

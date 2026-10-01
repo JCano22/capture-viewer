@@ -5,7 +5,7 @@ A C web server, written from scratch, that shows the Arduino UNO camera captures
 - **Images come from:** `~/Documents/Personal/Projects/Edge Ai Resistor Classifier V1/uno_captures/test`
 - **Started from:** [http-server-c](https://github.com/JCano22/http-server-c) (the original server, kept separate)
 
-**Last updated:** 2026-09-30. **Next up:** Step 3.1.
+**Last updated:** 2026-10-01. **Next up:** Step 4.
 
 ---
 
@@ -94,16 +94,16 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
   - `signal(SIGPIPE, SIG_IGN)` at the start of `main`, so a browser disconnect makes `write` return `-1` (logged as `write: Broken pipe`) instead of killing the server
   - **Tested:** downloaded image is byte-identical to the original (183199 bytes); missing file → 404; `..` → 403; clients that reset mid-response log `Broken pipe` and the server keeps running
 
+### Step 3: Image list (`/api/images`)
+- [x] **3.1** List the capture folder in `send_image_list(client_fd)` above `main`: `opendir` (500 if `NULL`), `readdir` loop, `closedir`
+- [x] **3.2** Filters, each with `continue`: `name[0] == '.'` (also skips `.` and `..`); `strrchr(name, '.')` + `strcasecmp` for `.jpg`/`.jpeg`; `strpbrk(name, "\"\\")` skips names that would break the JSON
+- [x] **3.3** `stat(full_path, &st)` for `st_mtime` and `st_size` (`continue` if it fails, since the file may have just been deleted)
+- [x] **3.4** Build the JSON in a 64 KB buffer: format each object (with its leading comma) into a small `item` buffer, check it fits (`len + item_len + 2 <= sizeof(json)`, room for `]` and `'\0'`), then `memcpy` it in. Close with `]` and send with `Content-Type: application/json` via `write_all`
+- [x] **Tested:** valid JSON with all 10 images (`python3 -m json.tool`), and the page shows them
+
 ---
 
 ## To do ⏳
-
-### Step 3: Image list (`/api/images`)
-- [ ] **3.1** List the capture folder with `opendir` / `readdir` / `closedir`
-- [ ] **3.2** Keep only `.jpg` / `.jpeg` files, and skip names starting with `.`
-- [ ] **3.3** Get `mtime` and `size` for each with `stat`
-- [ ] **3.4** Build the JSON text and send it with `Content-Type: application/json`
-- [ ] **Test:** `curl -i http://localhost:8080/api/images`. Then the page should show the images.
 
 ### Step 4: Cleanup and improvements
 - [ ] Use the chunked file sender for `index.html` too, and remove the fixed 32 KB buffer
@@ -147,3 +147,9 @@ Where this is in `www/index.html`: `fetch("/api/images")` is in `refresh()`, and
 | `size_t` is unsigned, so `< 0` is never true; store `read`/`write` results in `ssize_t` | `write_all` bug |
 | Writing to a closed connection raises `SIGPIPE`, which kills the process by default; `SIG_IGN` turns it into a `-1` from `write` | 2.6 Part C |
 | On localhost a 183 KB image fits in the send buffer, so a slow curl + Ctrl+C may not trigger an error; a client that resets immediately does | testing `SIGPIPE` |
+| `stat(path, &st)` is `fstat` by path: no need to open the file. `st_mtime` changes only when the contents are written | 3.3 |
+| `'.'` is a `char`; `"."` is a `char *` (a string). `name[0] == "."` compares a character to an address | 3.2 bug |
+| `snprintf` returns the length it *would* have written; adding that to `len` when truncated pushes `len` past the buffer, and `sizeof - len` wraps around (unsigned) | 3.4 overflow check |
+| Append to a buffer with `snprintf(buf + len, sizeof(buf) - len, ...)`; check room *before* appending | building the JSON |
+| `cond ? a : b` (ternary) picks a value inline | leading comma in each JSON object |
+| `continue` skips one item; `break` stops the loop | JSON filters vs. buffer full |
